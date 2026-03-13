@@ -43,7 +43,7 @@ Once you're happy with the correlation map, export it directly as a `.flow` or `
 
 ## Quick Start
 
-1. Load `LazyFlow.java` as a Burp extension (Extender → Add → Java)
+1. Load `LazyFlow.jar` as a Burp extension (Extender → Add → Java)
 2. In the Proxy, select one or more requests from a flow you want to analyze
 3. Right-click → **Send to LazyFlow** (or press **Ctrl+L**)
 4. Your browser opens with the highlighted flow analysis
