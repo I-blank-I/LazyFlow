@@ -79,12 +79,12 @@ public class LazyFlow implements BurpExtension {
         "  .s2xx{background:#1a3a1a;color:#3fb950;}.s3xx{background:#1a2f44;color:#58a6ff;}\n" +
         "  .s4xx{background:#3a1a1a;color:#f85149;}.s5xx{background:#3a2a1a;color:#e3b341;}\n" +
         "  .pair-body{display:grid;grid-template-columns:1fr 1fr;}\n" +
-        "  .http-block{overflow:hidden;}\n" +
+        "  .http-block{overflow:hidden;display:flex;flex-direction:column;max-height:75vh;}\n" +
         "  .http-block+.http-block{border-left:1px solid var(--border);}\n" +
-        "  .http-block-header{padding:5px 10px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:6px;}\n" +
+        "  .http-block-header{padding:5px 10px;font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;display:flex;align-items:center;gap:6px;flex-shrink:0;}\n" +
         "  .req-header-bar{background:var(--req-head);color:var(--req-col);}\n" +
         "  .res-header-bar{background:var(--res-head);color:var(--res-col);}\n" +
-        "  .http-raw{padding:10px 12px;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.7;background:var(--bg);min-height:50px;tab-size:2;}\n" +
+        "  .http-raw{padding:10px 12px;white-space:pre-wrap;word-break:break-all;font-size:11px;line-height:1.7;background:var(--bg);min-height:50px;tab-size:2;overflow-y:auto;flex:1 1 auto;}\n" +
         "  mark.corr-mark{cursor:pointer;font-family:inherit;font-size:inherit;transition:filter .15s,opacity .15s;}\n" +
         "  mark.corr-mark:hover{filter:brightness(1.5);}\n" +
         "  mark.corr-mark.dimmed{opacity:0.2;}\n" +
@@ -241,6 +241,32 @@ public class LazyFlow implements BurpExtension {
         "  return out;\n" +
         "}\n" +
         "\n" +
+        "function parseQSRaw(qs) {\n" +
+        "  const out = new Map();\n" +
+        "  if (!qs) return out;\n" +
+        "  for (const part of qs.split('&')) {\n" +
+        "    const eq  = part.indexOf('=');\n" +
+        "    if (eq === -1) continue;\n" +
+        "    const key = safeDecodeURI(part.slice(0, eq).replace(/\\+/g,' '));\n" +
+        "    const val = part.slice(eq+1);\n" +
+        "    if (!out.has(key)) out.set(key, []);\n" +
+        "    out.get(key).push(val);\n" +
+        "  }\n" +
+        "  return out;\n" +
+        "}\n" +
+        "\n" +
+        "function pathSegments(raw) {\n" +
+        "  if (!raw) return [];\n" +
+        "  let p = raw;\n" +
+        "  const schemeIdx = p.indexOf('://');\n" +
+        "  if (schemeIdx !== -1) {\n" +
+        "    const afterHost = p.indexOf('/', schemeIdx + 3);\n" +
+        "    p = afterHost === -1 ? '' : p.slice(afterHost);\n" +
+        "  }\n" +
+        "  p = p.split('?')[0].split('#')[0];\n" +
+        "  return p.split('/').filter(Boolean).map(safeDecodeURI);\n" +
+        "}\n" +
+        "\n" +
         "function safeDecodeURI(s) { try { return decodeURIComponent(s); } catch { return s; } }\n" +
         "\n" +
         "function flattenJSON(obj, prefix) {\n" +
@@ -332,7 +358,11 @@ public class LazyFlow implements BurpExtension {
         "          try {\n" +
         "            const qs = hval.slice(hval.indexOf('?')+1);\n" +
         "            for (const [p, pv] of parseQS(qs)) for (const pval of pv) add(pval, `header:${k}:queryparam:${p}`);\n" +
+        "            for (const [p, pv] of parseQSRaw(qs)) for (const pval of pv) add(pval, `header:${k}:queryparam:${p}`);\n" +
         "          } catch {}\n" +
+        "        }\n" +
+        "        if (hval.startsWith('/') || hval.includes('://')) {\n" +
+        "          pathSegments(hval).forEach((seg, i) => add(seg, `header:${k}:pathsegment:${i}`));\n" +
         "        }\n" +
         "      }\n" +
         "    }\n" +
@@ -360,6 +390,7 @@ public class LazyFlow implements BurpExtension {
         "  } catch {}\n" +
         "\n" +
         "  try { for (const [k, pv] of parseQS(res.body)) for (const v of pv) add(v, `body:form:${k}`); } catch {}\n" +
+        "  try { for (const [k, pv] of parseQSRaw(res.body)) for (const v of pv) add(v, `body:form:${k}`); } catch {}\n" +
         "\n" +
         "  for (const line of res.body.split('\\n')) {\n" +
         "    const lt = line.trim();\n" +
@@ -378,14 +409,22 @@ public class LazyFlow implements BurpExtension {
         "    if (vals.some(h => h.includes(v))) locs.push(`header:${k}`);\n" +
         "  }\n" +
         "\n" +
-        "  if (req.path && req.path.includes('?')) {\n" +
-        "    const qs = req.path.slice(req.path.indexOf('?')+1);\n" +
-        "    if (qs.includes(v)) {\n" +
-        "      let matched = false;\n" +
-        "      for (const [p, pv] of parseQS(qs)) {\n" +
-        "        if (pv.some(pval => pval.includes(v))) { locs.push(`url_param:${p}`); matched = true; }\n" +
+        "  if (req.path) {\n" +
+        "    if (req.path.includes('?')) {\n" +
+        "      const qs = req.path.slice(req.path.indexOf('?')+1);\n" +
+        "      if (qs.includes(v)) {\n" +
+        "        let matched = false;\n" +
+        "        for (const [p, pv] of parseQS(qs)) {\n" +
+        "          if (pv.some(pval => pval.includes(v))) { locs.push(`url_param:${p}`); matched = true; }\n" +
+        "        }\n" +
+        "        if (!matched) locs.push('url_query_raw');\n" +
         "      }\n" +
-        "      if (!matched) locs.push('url_query_raw');\n" +
+        "    }\n" +
+        "    const pathOnly = req.path.split('?')[0];\n" +
+        "    if (pathOnly.includes(v)) {\n" +
+        "      const segs = pathSegments(pathOnly);\n" +
+        "      const segIdx = segs.findIndex(s => s.includes(v));\n" +
+        "      locs.push(segIdx !== -1 ? `url_path_segment:${segIdx}` : 'url_path_raw');\n" +
         "    }\n" +
         "  }\n" +
         "\n" +
@@ -416,10 +455,16 @@ public class LazyFlow implements BurpExtension {
         "  if (req.path && req.path.includes('?')) {\n" +
         "    const qs = req.path.slice(req.path.indexOf('?')+1);\n" +
         "    for (const [p, pv] of parseQS(qs)) for (const v of pv) if (isInteresting(v)) results.push([v, `url_param:${p}`]);\n" +
+        "    for (const [p, pv] of parseQSRaw(qs)) for (const v of pv) if (isInteresting(v)) results.push([v, `url_param:${p}`]);\n" +
+        "  }\n" +
+        "  if (req.path) {\n" +
+        "    const pathOnly = req.path.split('?')[0];\n" +
+        "    pathSegments(pathOnly).forEach((seg, i) => { if (isInteresting(seg)) results.push([seg, `url_path_segment:${i}`]); });\n" +
         "  }\n" +
         "  if (req.body) {\n" +
         "    try { for (const [loc, val] of flattenJSON(JSON.parse(req.body))) if (isInteresting(String(val))) results.push([String(val), `body:json:${loc}`]); } catch {}\n" +
         "    try { for (const [p, pv] of parseQS(req.body)) for (const v of pv) if (isInteresting(v)) results.push([v, `body:form:${p}`]); } catch {}\n" +
+        "    try { for (const [p, pv] of parseQSRaw(req.body)) for (const v of pv) if (isInteresting(v)) results.push([v, `body:form:${p}`]); } catch {}\n" +
         "  }\n" +
         "  return results;\n" +
         "}\n" +
@@ -463,7 +508,7 @@ public class LazyFlow implements BurpExtension {
         "    for (const [val, reqLoc] of extractFromRequest(req)) {\n" +
         "      if (alreadyCorr.has(val)) continue;\n" +
         "      for (const [, res] of pairs) {\n" +
-        "        if (res.index >= req.index) continue;\n" +
+        "        if (res.index > req.index) continue;\n" +
         "        for (const resLoc of searchInResponse(res, val)) {\n" +
         "          correlations.push({ extracted:{ value:val, source_index:res.index, source_location:resLoc }, used_in_request_index:req.index, used_at_location:reqLoc });\n" +
         "          alreadyCorr.add(val);\n" +
@@ -478,8 +523,14 @@ public class LazyFlow implements BurpExtension {
         "\n" +
         "function assignColors(correlations) {\n" +
         "  const corrVals = new Set(correlations.map(c => c.extracted.value));\n" +
-        "  // drop superstrings: if any OTHER value is a substring of v, drop v\n" +
-        "  const clean = [...corrVals].filter(v => ![...corrVals].some(o => o !== v && v.includes(o)));\n" +
+        "  // Drop v only when the contained value o is a SUBSTANTIAL chunk of it —\n" +
+        "  // not just a short, coincidental substring (e.g. the word \"code\" showing up\n" +
+        "  // inside \"slashid-code:AbC123...\"). Otherwise a spurious short correlated\n" +
+        "  // value can wipe out a real, unrelated, much longer one.\n" +
+        "  const MIN_CONTAINED_LEN = 8, MIN_CONTAINED_RATIO = 0.5;\n" +
+        "  const clean = [...corrVals].filter(v => ![...corrVals].some(o =>\n" +
+        "    o !== v && v.includes(o) && o.length >= MIN_CONTAINED_LEN && o.length >= v.length * MIN_CONTAINED_RATIO\n" +
+        "  ));\n" +
         "  const colorMap = new Map();\n" +
         "  [...clean].sort().forEach((v,i) => colorMap.set(v, COLORS[i % COLORS.length]));\n" +
         "  return colorMap;\n" +
@@ -491,13 +542,19 @@ public class LazyFlow implements BurpExtension {
         "  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');\n" +
         "}\n" +
         "\n" +
-        "function highlightText(raw, colorMap) {\n" +
+        "function highlightText(raw, colorMap, suppress) {\n" +
+        "  suppress = suppress || null;\n" +
         "  let segments = [escHtmlRaw(raw)];\n" +
         "  const allEsc = [...colorMap.keys()].map(v => escHtmlRaw(v));\n" +
-        "  function isSuperstring(val) { const ev = escHtmlRaw(val); return allEsc.some(o => o !== ev && ev.includes(o)); }\n" +
+        "  function isSuperstring(val) {\n" +
+        "    const ev = escHtmlRaw(val);\n" +
+        "    const MIN_CONTAINED_LEN = 8, MIN_CONTAINED_RATIO = 0.5;\n" +
+        "    return allEsc.some(o => o !== ev && ev.includes(o) && o.length >= MIN_CONTAINED_LEN && o.length >= ev.length * MIN_CONTAINED_RATIO);\n" +
+        "  }\n" +
         "\n" +
         "  for (const val of [...colorMap.keys()].sort((a,b) => b.length - a.length)) {\n" +
         "    if (isSuperstring(val)) continue;\n" +
+        "    if (suppress && suppress.has(val)) continue;\n" +
         "    const color = colorMap.get(val), esc = escHtmlRaw(val);\n" +
         "    if (!esc) continue;\n" +
         "    const open  = `<mark class=\"corr-mark\" style=\"background:${color}22;color:${color};border:1px solid ${color}88;border-radius:3px;padding:0 2px;\" data-value=\"${esc}\">`;\n" +
@@ -525,15 +582,34 @@ public class LazyFlow implements BurpExtension {
         "  const { correlations } = correlate(pairs);\n" +
         "  const colorMap = assignColors(correlations);\n" +
         "\n" +
-        "  const pairData = pairs.map(([req, res]) => ({\n" +
-        "    index:            req.index,\n" +
-        "    request_raw:      req.raw.replace(/\\r\\n/g,'\\n').replace(/\\r/g,'\\n').replace(/\\n/g,'\\r\\n'),\n" +
-        "    response_raw:     res.raw,\n" +
-        "    request_hl:       highlightText(req.raw, colorMap),\n" +
-        "    response_hl:      highlightText(res.raw, colorMap),\n" +
-        "    request_summary:  req.method ? `${req.method} ${req.path}` : req.raw.split('\\n')[0],\n" +
-        "    response_summary: res.status ? String(res.status) : res.raw.split('\\n')[0],\n" +
-        "  }));\n" +
+        "  // earliest response occurrence per value — this is the true \"extraction point\".\n" +
+        "  // Later responses that happen to contain the same value are NOT a new\n" +
+        "  // extraction, just a coincidental repeat, so we don't highlight them there.\n" +
+        "  // Requests are unaffected: every usage of a correlated value in a request\n" +
+        "  // is still meaningful and stays highlighted.\n" +
+        "  const siMap = new Map(), slMap = new Map();\n" +
+        "  for (const c of correlations) {\n" +
+        "    const v = c.extracted.value; if (!colorMap.has(v)) continue;\n" +
+        "    const si = c.extracted.source_index;\n" +
+        "    if (!siMap.has(v) || si < siMap.get(v)) { siMap.set(v, si); slMap.set(v, c.extracted.source_location); }\n" +
+        "  }\n" +
+        "\n" +
+        "  const pairData = pairs.map(([req, res]) => {\n" +
+        "    const responseSuppress = new Set();\n" +
+        "    for (const v of colorMap.keys()) {\n" +
+        "      const earliest = siMap.get(v);\n" +
+        "      if (earliest !== undefined && res.index !== earliest) responseSuppress.add(v);\n" +
+        "    }\n" +
+        "    return {\n" +
+        "      index:            req.index,\n" +
+        "      request_raw:      req.raw.replace(/\\r\\n/g,'\\n').replace(/\\r/g,'\\n').replace(/\\n/g,'\\r\\n'),\n" +
+        "      response_raw:     res.raw,\n" +
+        "      request_hl:       highlightText(req.raw, colorMap),\n" +
+        "      response_hl:      highlightText(res.raw, colorMap, responseSuppress),\n" +
+        "      request_summary:  req.method ? `${req.method} ${req.path}` : req.raw.split('\\n')[0],\n" +
+        "      response_summary: res.status ? String(res.status) : res.raw.split('\\n')[0],\n" +
+        "    };\n" +
+        "  });\n" +
         "\n" +
         "  const groups = new Map();\n" +
         "  for (const c of correlations) {\n" +
@@ -547,13 +623,6 @@ public class LazyFlow implements BurpExtension {
         "      if (!colorMap.has(c.extracted.value)) continue;\n" +
         "      corrData.push({ value:c.extracted.value, color:colorMap.get(c.extracted.value), src_index:c.extracted.source_index, src_location:c.extracted.source_location, dst_index:c.used_in_request_index, dst_location:c.used_at_location });\n" +
         "    }\n" +
-        "  }\n" +
-        "\n" +
-        "  const siMap = new Map(), slMap = new Map();\n" +
-        "  for (const c of correlations) {\n" +
-        "    const v = c.extracted.value; if (!colorMap.has(v)) continue;\n" +
-        "    const si = c.extracted.source_index;\n" +
-        "    if (!siMap.has(v) || si < siMap.get(v)) { siMap.set(v, si); slMap.set(v, c.extracted.source_location); }\n" +
         "  }\n" +
         "\n" +
         "  const legend = [...colorMap.entries()].map(([v, color]) => ({\n" +
@@ -702,7 +771,7 @@ public class LazyFlow implements BurpExtension {
         "  const occ=[]; let from=0;\n" +
         "  while(true){const i=rawText.indexOf(value,from);if(i===-1)break;occ.push(i);from=i+1;}\n" +
         "  if(!occ.length) return null;\n" +
-        "  const SOFT=new Set(['\\n','\\r','(', ',','<']);\n" +
+        "  const SOFT=new Set(['\\n','\\r','(', ',','<','?','&']);\n" +
         "  function bfi(idx){\n" +
         "    const ai=idx+value.length; let tc=ai<rawText.length?rawText[ai]:'\\n';\n" +
         "    if(!tc||/\\w/.test(tc)) tc='\\n';\n" +
@@ -718,6 +787,12 @@ public class LazyFlow implements BurpExtension {
         "  const{prefix,termChar}=bfi(bi);\n" +
         "  function re(s){return s.replace(/[.*+?^$()|[\\]\\\\]/g,'\\\\$&');}\n" +
         "  function te(c){if(c==='\\n')return'\\\\n';if(c==='\\r')return'\\\\r';if(c===']')return'\\\\]';if(c==='\\\\')return'\\\\\\\\';if(c==='^')return'\\\\^';return c;}\n" +
+        "  // End-of-line/end-of-text terminator: exclude \\r from the captured value and\n" +
+        "  // match a real CRLF (or a bare LF, or literal end of text) rather than just '\\n',\n" +
+        "  // so the value isn't polluted with a trailing \\r on real \\r\\n-terminated raw HTTP.\n" +
+        "  if(termChar==='\\n'){\n" +
+        "    return`${re(prefix)}([^\\r]+)\\r`;\n" +
+        "  }\n" +
         "  return`${re(prefix)}([^${te(termChar)}]+)${re(termChar)}`;\n" +
         "}\n" +
         "\n" +
