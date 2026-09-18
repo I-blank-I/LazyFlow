@@ -193,11 +193,6 @@ public class LazyFlow implements BurpExtension {
         "<script>\n" +
         "'use strict';\n" +
         "\n" +
-        "// ═══════════════════════════════════════════════════════════════════════════════\n" +
-        "// PARSING & CORRELATION ENGINE  (ported from flow_analyzer.py)\n" +
-        "// Zero server. Zero network. Runs entirely in the browser.\n" +
-        "// ═══════════════════════════════════════════════════════════════════════════════\n" +
-        "\n" +
         "const COLORS = [\n" +
         "  \"#FF6B6B\",\"#FFD93D\",\"#6BCB77\",\"#4D96FF\",\"#FF922B\",\"#CC5DE8\",\"#20C997\",\n" +
         "  \"#F06595\",\"#74C0FC\",\"#A9E34B\",\"#FF8787\",\"#FFA94D\",\"#69DB7C\",\"#4DABF7\",\n" +
@@ -875,7 +870,7 @@ public class LazyFlow implements BurpExtension {
             if (selected == null || selected.isEmpty()) return List.of();
             List<HttpRequestResponse> ordered = new java.util.ArrayList<>(selected);
             Collections.reverse(ordered);
-            JMenuItem item = new JMenuItem("Send to LazyFlow  [Ctrl+L]");
+            JMenuItem item = new JMenuItem("Send to LazyFlow [Ctrl+L]");
             item.addActionListener(e -> new Thread(() -> handleExport(ordered)).start());
             return List.of(item);
         }
